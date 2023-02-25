@@ -972,11 +972,14 @@ def bulk_data_based(num_clients, start_client_index, end_client_index, corpora, 
     return bulk_generator(chain(*readers), pipeline, original_params)
 
 
+from newsmile import SmileEncoder
+
+
 class GenerateActionMetaData:
     RECENCY_SLOPE = 30
 
     def __init__(self, index_name, type_name, conflicting_ids=None, conflict_probability=None, on_conflict=None, recency=None,
-                 rand=random.random, randint=random.randint, randexp=random.expovariate, use_create=False):
+                 rand=random.random, randint=random.randint, randexp=random.expovariate, use_create=False, encoder=SmileEncoder()):
         if type_name:
             self.meta_data_index_with_id = '{"index": {"_index": "%s", "_type": "%s", "_id": "%s"}}\n' % \
                                            (index_name, type_name, "%s")
@@ -986,10 +989,11 @@ class GenerateActionMetaData:
         else:
             self.meta_data_index_with_id = '{"index": {"_index": "%s", "_id": "%s"}}\n' % (index_name, "%s")
             self.meta_data_update_with_id = '{"update": {"_index": "%s", "_id": "%s"}}\n' % (index_name, "%s")
-            self.meta_data_index_no_id = '{"index": {"_index": "%s"}}\n' % index_name
+            self.meta_data_index_no_id = '{"index": {"_index": "%s"}}' % index_name
             self.meta_data_create_no_id = '{"create": {"_index": "%s"}}\n' % index_name
         if use_create and conflicting_ids:
             raise exceptions.BenchmarkError("Index mode '_create' cannot be used with conflicting ids")
+        self.encoder = encoder
         self.conflicting_ids = conflicting_ids
         self.on_conflict = on_conflict
         self.use_create = use_create
@@ -1047,7 +1051,7 @@ class GenerateActionMetaData:
         else:
             if self.use_create:
                 return "create", self.meta_data_create_no_id
-            return "index", self.meta_data_index_no_id
+            return "index", self.encoder.encode(self.meta_data_index_no_id)
 
 
 class Slice:
@@ -1110,7 +1114,7 @@ class IndexDataReader:
         self.type_name = type_name
 
     def __enter__(self):
-        self.file_source.open(self.data_file, "rt", self.bulk_size)
+        self.file_source.open(self.data_file, "rb", self.bulk_size)
         return self
 
     def __iter__(self):
@@ -1131,7 +1135,7 @@ class IndexDataReader:
                 if docs_in_bulk == 0:
                     break
                 docs_in_batch += docs_in_bulk
-                batch.append((docs_in_bulk, b"".join(bulk)))
+                batch.append((docs_in_bulk, (b"\xff".join(bulk)) + b'\xff'))
             if docs_in_batch == 0:
                 raise StopIteration()
             return self.index_name, self.type_name, batch
@@ -1163,12 +1167,10 @@ class MetadataIndexDataReader(IndexDataReader):
         Special-case implementation for bulk data files where the action and meta-data line is always identical.
         """
         current_bulk = []
-        # hoist
-        action_metadata_line = self.action_metadata_line.encode("utf-8")
         docs = next(self.file_source)
 
         for doc in docs:
-            current_bulk.append(action_metadata_line)
+            current_bulk.append(self.action_metadata_line)
             current_bulk.append(doc)
         return len(docs), current_bulk
 

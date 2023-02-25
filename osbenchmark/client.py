@@ -228,7 +228,47 @@ class OsClientFactory:
         import io
         import aiohttp
 
-        from opensearchpy.serializer import JSONSerializer
+        from opensearchpy.serializer import JSONSerializer, Serializer
+        from newsmile import SmileEncoder, SmileDecoder
+
+        class NoOpSerializer(Serializer):
+            mimetype = "application/smile"
+            decoder = SmileDecoder()
+            encoder = SmileEncoder()
+
+            def loads(self, s):
+                return JSONSerializer().loads(s)
+
+            def dumps(self, data):
+                try:
+                    self.decoder.decode(data)
+                except (KeyError, TypeError):
+                    return self.encoder.encode(data)
+                return data
+
+        class SMILESerializer(Serializer):
+            mimetype = "application/smile"
+
+            def loads(self, s):
+                return JSONSerializer().loads(s)
+
+            def dumper(self, data):
+                is_raw = isinstance(data, bytes)
+                data = data.split(b'\n' if is_raw else '\n')
+                stream_separator = b'\xff'
+
+                if len(data) < 2:
+                    return SmileEncoder().encode(
+                            data[0].decode('utf-8') if is_raw else data[0]
+                    )
+
+                return stream_separator.join(map(self.dumper, filter(lambda x: x != b'', data))) + stream_separator
+
+            def dumps(self, data):
+                try:
+                    return SmileEncoder().encode(data)
+                except:
+                    return self.dumper(data)
 
         class LazyJSONSerializer(JSONSerializer):
             def loads(self, s):
@@ -251,8 +291,13 @@ class OsClientFactory:
         trace_config.on_request_exception.append(on_request_end)
 
         # override the builtin JSON serializer
-        self.client_options["serializer"] = LazyJSONSerializer()
+        self.client_options["serializer"] = NoOpSerializer()
         self.client_options["trace_config"] = trace_config
+
+        headers = {
+                'content-type': 'application/smile',
+                'accept': 'application/json',
+        }
 
         class BenchmarkAsyncOpenSearch(opensearchpy.AsyncOpenSearch, RequestContextHolder):
             pass
@@ -260,6 +305,7 @@ class OsClientFactory:
         return BenchmarkAsyncOpenSearch(hosts=self.hosts,
                                        connection_class=osbenchmark.async_connection.AIOHttpConnection,
                                        ssl_context=self.ssl_context,
+                                       headers=headers,
                                        **self.client_options)
 
 

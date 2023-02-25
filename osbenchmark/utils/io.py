@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
+from tqdm import tqdm
 from contextlib import suppress
 
 import mmap
@@ -111,8 +112,8 @@ class MmapSource:
     def seek(self, offset):
         self.mm.seek(offset)
 
-    def read(self):
-        return self.mm.read()
+    def read(self, n=None):
+        return self.mm.read(n)
 
     def readline(self):
         return self.mm.readline()
@@ -121,7 +122,10 @@ class MmapSource:
         lines = []
         mm = self.mm
         for _ in range(num_lines):
-            line = mm.readline()
+            line = b''
+            while (b := mm.read(1)) and b != b'\xff':
+                line += b
+
             if line == b"":
                 break
             lines.append(line)
@@ -533,14 +537,19 @@ def prepare_file_offset_table(data_file_path):
         console.info("Preparing file offset table for [%s] ... " % data_file_path, end="", flush=True)
         line_number = 0
         with file_offset_table:
-            with open(data_file_path, mode="rt", encoding="utf-8") as data_file:
+            with open(data_file_path, mode="rb") as data_file, tqdm(total=32266289650) as bar:
                 while True:
-                    line = data_file.readline()
+                    line = b''
+                    while b := data_file.read(1):
+                        if b == b'\xff':
+                            break
+                        line += b
                     if len(line) == 0:
                         break
                     line_number += 1
                     if line_number % 50000 == 0:
                         file_offset_table.add_offset(line_number, data_file.tell())
+                    bar.update(len(line))
         console.println("[OK]")
         return line_number
     else:
@@ -582,8 +591,8 @@ def skip_lines(data_file_path, data_file, number_of_lines_to_skip):
     # forward the last remaining lines if needed
     if remaining_lines > 0:
         for _ in range(remaining_lines):
-            data_file.readline()
-
+            while (b := data_file.read(1)) and b != b'\xff':
+                continue
 
 def get_size(start_path="."):
     total_size = 0
