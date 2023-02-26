@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
+from tqdm import tqdm
 from contextlib import suppress
 
 import mmap
@@ -532,7 +533,7 @@ def prepare_file_offset_table(data_file_path):
     if not file_offset_table.is_valid():
         console.info("Preparing file offset table for [%s] ... " % data_file_path, end="", flush=True)
         line_number = 0
-        with file_offset_table:
+        with file_offset_table, tqdm(total=42688856500) as bar:
             with open(data_file_path, mode="rt", encoding="utf-8") as data_file:
                 while True:
                     line = data_file.readline()
@@ -541,6 +542,7 @@ def prepare_file_offset_table(data_file_path):
                     line_number += 1
                     if line_number % 50000 == 0:
                         file_offset_table.add_offset(line_number, data_file.tell())
+                    bar.update(len(line))
         console.println("[OK]")
         return line_number
     else:
